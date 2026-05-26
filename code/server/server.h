@@ -127,6 +127,24 @@ typedef struct netchan_buffer_s {
 	struct netchan_buffer_s *next;
 } netchan_buffer_t;
 
+#define USERCMD_BUFFER_SIZE  64
+
+typedef struct {
+	usercmd_t cmd;
+	int       scheduledTime;  // when to actually process this cmd
+	qboolean  delta;
+} pendingUsercmd_t;
+
+#define USERCMD_STAT_SIZE    128  // >= USERCMD_BUFFER_SIZE
+
+typedef struct {
+	int             missingCounts[USERCMD_STAT_SIZE];
+	int             bloatCounts[USERCMD_STAT_SIZE];
+	int             statCount;
+	int             missingCount; // per net delivery + exec
+	int             lastPacketTime; // track new net delivery
+} usercmdStats_t;
+
 typedef struct rateLimit_s {
 	int			lastTime;
 	int			burst;
@@ -230,6 +248,13 @@ typedef struct client_s {
 	char			tld[3]; // "XX\0"
 	const char		*country;
 
+	// --- jitter-adaptive usercmd buffer ---
+	int             usercmdBloat; // whether to buffer and buffered commands count to not react to
+	pendingUsercmd_t usercmdBuf[USERCMD_BUFFER_SIZE];
+	int             usercmdCount;
+	int             usercmdLastServerTime;
+	int             usercmdLastScheduleTime;
+	usercmdStats_t  usercmdStats;	
 } client_t;
 
 //=============================================================================
@@ -363,6 +388,7 @@ void SV_DirectConnect( const netadr_t *from );
 void SV_PrintClientStateChange( const client_t *cl, clientState_t newState );
 
 void SV_ExecuteClientMessage( client_t *cl, msg_t *msg );
+void SV_ClientsUsercmdsFlush ( void );
 void SV_UserinfoChanged( client_t *cl, qboolean updateUserinfo, qboolean runFilter );
 
 void SV_ClientEnterWorld( client_t *client );

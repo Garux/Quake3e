@@ -1380,6 +1380,8 @@ void SV_Frame( int msec ) {
 
 	// run the game simulation in chunks
 	while ( sv.timeResidual >= frameMsec ) {
+		SV_ClientsUsercmdsFlush();
+
 		sv.timeResidual -= frameMsec;
 		svs.time += frameMsec;
 		sv.time += frameMsec;

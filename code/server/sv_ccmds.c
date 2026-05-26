@@ -315,7 +315,7 @@ static void SV_MapRestart_f( void ) {
 	for ( i = 0; i < 3; i++ )
 	{
 		Cbuf_Wait();
-		sv.time += 100;
+		sv.time += 96; // preserve being multiple of 8
 		VM_Call( gvm, 1, GAME_RUN_FRAME, sv.time );
 	}
 
@@ -360,9 +360,9 @@ static void SV_MapRestart_f( void ) {
 
 	// run another frame to allow things to look at all the players
 	Cbuf_Wait();
-	sv.time += 100;
+	sv.time += 96; // preserve being multiple of 8
 	VM_Call( gvm, 1, GAME_RUN_FRAME, sv.time );
-	svs.time += 100;
+	svs.time += 96; // preserve being multiple of 8
 
 	for ( i = 0; i < sv.maxclients; i++ ) {
 		client = &svs.clients[i];

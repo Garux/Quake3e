@@ -1831,6 +1831,12 @@ void SV_UserinfoChanged( client_t *cl, qboolean updateUserinfo, qboolean runFilt
 		cl->snapshotMsec = i;
 	}
 
+	// bloat option
+	val = Info_ValueForKey( cl->userinfo, "bloat" );
+	if ( val[0] )
+		cl->usercmdBloat = atoi( val );
+
+
 	if ( !updateUserinfo )
 		return;
 
@@ -2141,6 +2147,77 @@ void SV_ClientThink (client_t *cl, usercmd_t *cmd) {
 	VM_Call( gvm, 1, GAME_CLIENT_THINK, cl - svs.clients );
 }
 
+void SV_ClientsUsercmdsFlush ( void ) {
+	for ( client_t *cl = svs.clients, * const clend = cl + sv.maxclients; cl != clend; ++cl )
+	{
+		if( cl->state == CS_ACTIVE && cl->usercmdBloat != 0 ){
+			//% if( !cl->usercmdCount ) Com_Printf("svs.time %i\n", svs.time ); //%
+			if( cl->usercmdCount == 0 ){
+				++cl->usercmdStats.missingCount;
+				// repeat last command, if missing, this is critical to have command during weapon tricks
+				if( cl->usercmdLastScheduleTime != 0 && (cl->lastUsercmd.buttons & BUTTON_ATTACK) ){
+					cl->lastUsercmd.serverTime += 8;
+					cl->usercmdLastScheduleTime += 8;
+					cl->usercmdLastServerTime += 8;
+					SV_ClientThink( cl, &cl->lastUsercmd );
+					//% Com_Printf("cl->usercmdCount %i, cl->lastUsercmd.serverTime %i, cl->usercmdLastScheduleTime %i, svs.time %i\n", cl->usercmdCount, cl->lastUsercmd.serverTime, cl->usercmdLastScheduleTime, svs.time ); //%
+				}
+			}
+			while( cl->usercmdCount )
+			{
+				pendingUsercmd_t *pcmd = cl->usercmdBuf;
+				if( pcmd->scheduledTime <= svs.time ){
+					//% Com_Printf("cl->usercmdCount %i, pcmd->cmd.serverTime %i, pcmd->scheduledTime %i, svs.time %i\n", cl->usercmdCount, pcmd->cmd.serverTime, pcmd->scheduledTime, svs.time ); //%
+					cl->deltaActive = pcmd->delta;
+					SV_ClientThink( cl, &pcmd->cmd );
+					memmove( cl->usercmdBuf, cl->usercmdBuf + 1, sizeof( *cl->usercmdBuf ) * ( --cl->usercmdCount ) );
+				}
+				else{
+					break;
+				}
+			}
+		}
+	}
+}
+
+static void SV_ClientUsercmdsAnalyze ( client_t *cl ){
+	usercmdStats_t *stats = &cl->usercmdStats;
+	// gather stats
+	if( stats->lastPacketTime != cl->lastPacketTime ){
+		stats->lastPacketTime = cl->lastPacketTime;
+		if( stats->missingCount < USERCMD_STAT_SIZE )
+			++stats->missingCounts[stats->missingCount];
+		stats->missingCount = 0;
+		++stats->bloatCounts[cl->usercmdCount];
+		++stats->statCount;
+
+		// adjust
+		if( stats->statCount == 125 ){
+			int miss, bloat, count;
+			for( miss = USERCMD_STAT_SIZE, count = 0; count < 5 && --miss >= 0; )
+			{
+				count += stats->missingCounts[miss];
+			}
+			for( bloat = 0, count = 0; count < 5 && bloat < USERCMD_STAT_SIZE - 1; ++bloat )
+			{
+				count += stats->bloatCounts[bloat];
+			}
+			if( miss > 0 ){
+				cl->usercmdLastScheduleTime += miss * 8;
+			}
+			else if( bloat >= cl->usercmdBloat ){ // note reaction to bloat=1 tends to trigger miss next time
+				//? consider minimal bloat value to not overreact and cause misses?
+				cl->usercmdLastScheduleTime -= (bloat - cl->usercmdBloat + 1) * 8;
+			}
+			//% Com_Printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> miss %i, bloat %i\n", miss, bloat); //%
+			// reset
+			stats->statCount = 0;
+			memset( stats->missingCounts, 0, sizeof( stats->missingCounts ) );
+			memset( stats->bloatCounts, 0, sizeof( stats->bloatCounts ) );
+		}
+	}
+}
+
 
 /*
 ==================
@@ -2228,6 +2305,14 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 		if ( cmds[i].serverTime - cmds[cmdCount-1].serverTime > 0 ) {
 			continue;
 		}
+
+		// anticipate pmove_fixed snapping
+		// ucmd->serverTime = ((ucmd->serverTime + pmove_msec.integer-1) / pmove_msec.integer) * pmove_msec.integer;
+		// https://github.com/id-Software/Quake-III-Arena/blob/dbe4ddb10315479fc00086f08e25d968b4b43c49/code/game/g_active.c#L800
+		// fixes plasma climb with com_maxfps 140 (with bloat fix enabled)
+		cmds[i].serverTime = (cmds[i].serverTime + 7) & ~7;
+		
+
 		// extremely lagged or cmd from before a map_restart
 		//if ( cmds[i].serverTime > svs.time + 3000 ) {
 		//	continue;
@@ -2238,7 +2323,46 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 		if ( cmds[i].serverTime - cl->lastUsercmd.serverTime <= 0 ) {
 			continue;
 		}
-		SV_ClientThink( cl, &cmds[ i ] );
+		
+		if( cl->usercmdBloat == 0 ){
+			SV_ClientThink( cl, &cmds[ i ] );
+		}
+		else{
+			if( cl->usercmdCount > 50 ){ // reset buffer on map_restart or other big bloat cause
+				cl->usercmdCount = 0;
+				cl->usercmdLastScheduleTime = svs.time;
+			}
+
+			if( cmds[i].serverTime > cl->usercmdLastServerTime ){
+				if( cl->usercmdLastScheduleTime == 0 ){ // init once
+					cl->usercmdLastScheduleTime = svs.time;
+					cl->usercmdLastServerTime = cmds[i].serverTime;
+					cl->usercmdStats.lastPacketTime = cl->lastPacketTime;
+				}
+				
+				SV_ClientUsercmdsAnalyze( cl );
+
+				pendingUsercmd_t *pcmd = &cl->usercmdBuf[cl->usercmdCount++];
+				pcmd->cmd = cmds[i];
+				pcmd->delta = delta;
+
+				pcmd->scheduledTime = cl->usercmdLastScheduleTime + ( pcmd->cmd.serverTime - cl->usercmdLastServerTime );
+				cl->usercmdLastScheduleTime = pcmd->scheduledTime;
+				cl->usercmdLastServerTime = pcmd->cmd.serverTime;
+			
+#if 0
+				pcmd->scheduledTime =
+				// this: svs.time or prevcmd->scheduledTime + 8 approach works perfectly, but
+				// buffer tends to accumulate too much commands (= unwanted delay) on singular net jitters or map_restart with throttling traffic
+					(cl->usercmdCount == 1)
+					? svs.time
+					// cmd.serverTime is jittery due to being based on packets arrival time, snap it to consistent svs.time steps
+					//! note hardcoded to 8ms frame
+					: (pcmd - 1)->scheduledTime + ((( pcmd->cmd.serverTime - (pcmd - 1)->cmd.serverTime ) + 4) & ~7);
+				// Com_Printf("cl->usercmdCount %i, pcmd->cmd.serverTime %i, pcmd->scheduledTime %i, svs.time %i\n", cl->usercmdCount, pcmd->cmd.serverTime, pcmd->scheduledTime, svs.time );
+ #endif
+			}
+		}
 	}
 }
 
