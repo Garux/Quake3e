@@ -3978,6 +3978,10 @@ void CL_Init( void ) {
 	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 	Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("snaps", "40", CVAR_USERINFO | CVAR_ARCHIVE );
+	cv = Cvar_Get ("bloat", "0", CVAR_USERINFO | CVAR_ARCHIVE_ND );
+	Cvar_SetDescription( cv, "Compensate connection buffer bloat on server, which supports this:\n"
+		"   0: Disable\n"
+		" > 0: Enable, set allowed delayed ucmds count; recommended = 2; higher value adds more server response delay, also more stability\n" );
 	Cvar_Get ("model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 	Cvar_Get ("headmodel", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
  	Cvar_Get ("team_model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
