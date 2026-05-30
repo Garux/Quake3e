@@ -1189,6 +1189,8 @@ void SV_ClientEnterWorld( client_t *client ) {
 
 	client->deltaActive = qfalse;				// force delta reset
 	client->lastSnapshotTime = svs.time - 9999; // generate a snapshot immediately
+	client->usercmdLastServerTime = 0;          // trigger client->usercmdBuf state reset
+	client->usercmdCount = 0;
 
 	// call the game begin function
 	VM_Call( gvm, 1, GAME_CLIENT_BEGIN, clientNum );
@@ -2155,7 +2157,7 @@ void SV_ClientsUsercmdsFlush ( void ) {
 			if( cl->usercmdCount == 0 ){
 				++cl->usercmdStats.missingCount;
 				// repeat last command, if missing, this is critical to have command during weapon tricks
-				if( cl->usercmdLastScheduleTime != 0 && (cl->lastUsercmd.buttons & BUTTON_ATTACK) ){
+				if( cl->usercmdLastServerTime != 0 && (cl->lastUsercmd.buttons & BUTTON_ATTACK) ){
 					cl->lastUsercmd.serverTime += 8;
 					cl->usercmdLastScheduleTime += 8;
 					cl->usercmdLastServerTime += 8;
@@ -2328,18 +2330,14 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 			SV_ClientThink( cl, &cmds[ i ] );
 		}
 		else{
-			if( cl->usercmdCount > 50 ){ // reset buffer on map_restart or other big bloat cause
+			if( cl->usercmdLastServerTime == 0 // reset client->usercmdBuf state on connect/map_restart/level change
+			|| cl->usercmdCount > USERCMD_BUFFER_SIZE - 14 ){ // or on unexpected big bloat
 				cl->usercmdCount = 0;
+				cl->usercmdLastServerTime = cmds[i].serverTime - 8;
 				cl->usercmdLastScheduleTime = svs.time;
 			}
 
 			if( cmds[i].serverTime > cl->usercmdLastServerTime ){
-				if( cl->usercmdLastScheduleTime == 0 ){ // init once
-					cl->usercmdLastScheduleTime = svs.time;
-					cl->usercmdLastServerTime = cmds[i].serverTime;
-					cl->usercmdStats.lastPacketTime = cl->lastPacketTime;
-				}
-				
 				SV_ClientUsercmdsAnalyze( cl );
 
 				pendingUsercmd_t *pcmd = &cl->usercmdBuf[cl->usercmdCount++];
