@@ -2153,31 +2153,40 @@ void SV_ClientsUsercmdsFlush ( void ) {
 	for ( client_t *cl = svs.clients, * const clend = cl + sv.maxclients; cl != clend; ++cl )
 	{
 		if( cl->state == CS_ACTIVE && cl->usercmdBloat != 0 ){
-			//% if( !cl->usercmdCount ) Com_Printf("svs.time %i\n", svs.time ); //%
 			if( cl->usercmdCount == 0 ){
+				//% Com_Printf("svs.time %i\n", svs.time ); //%
 				++cl->usercmdStats.missingCount;
-				// repeat last command, if missing, this is critical to have command during weapon tricks
+				// repeat last command, if missing, this is critical to have pmove during weapon tricks
+				// client prediction desync is not a problem, since there is no weapons prediction 🙃
+				/* this helps exactly what: when packets burst is sporadically delayed more than expected
+				   later command with this servertime is skipped later in our code (skipped in Pmove() anyway)
+				   apparently this does not help ping fluctuations/cl_timenudge changes, which affect cmd.serverTime
+				   (would require explicit cmd.serverTime management) */
 				if( cl->usercmdLastServerTime != 0 && (cl->lastUsercmd.buttons & BUTTON_ATTACK) ){
 					cl->lastUsercmd.serverTime += 8;
-					cl->usercmdLastScheduleTime += 8;
-					cl->usercmdLastServerTime += 8;
 					SV_ClientThink( cl, &cl->lastUsercmd );
-					//% Com_Printf("cl->usercmdCount %i, cl->lastUsercmd.serverTime %i, cl->usercmdLastScheduleTime %i, svs.time %i\n", cl->usercmdCount, cl->lastUsercmd.serverTime, cl->usercmdLastScheduleTime, svs.time ); //%
+					//% Com_Printf("++->usercmdCount %i, cl->lastUsercmd.serverTime %i, cl->usercmdLastScheduleTime %i, svs.time %i\n", cl->usercmdCount, cl->lastUsercmd.serverTime, cl->usercmdLastScheduleTime, svs.time ); //%
 				}
+				continue;
 			}
-			while( cl->usercmdCount )
+			
+			pendingUsercmd_t *pcmd = cl->usercmdBuf, * const pcmdend = pcmd + cl->usercmdCount;
+			for( ; pcmd != pcmdend && pcmd->scheduledTime <= svs.time; ++pcmd )
 			{
-				pendingUsercmd_t *pcmd = cl->usercmdBuf;
-				if( pcmd->scheduledTime <= svs.time ){
-					//% Com_Printf("cl->usercmdCount %i, pcmd->cmd.serverTime %i, pcmd->scheduledTime %i, svs.time %i\n", cl->usercmdCount, pcmd->cmd.serverTime, pcmd->scheduledTime, svs.time ); //%
-					cl->deltaActive = pcmd->delta;
-					SV_ClientThink( cl, &pcmd->cmd );
-					memmove( cl->usercmdBuf, cl->usercmdBuf + 1, sizeof( *cl->usercmdBuf ) * ( --cl->usercmdCount ) );
+				/* doing >1 commands per server frame during weapon tricks is not fine idea either
+				   e.g. on cl->usercmdLastScheduleTime adjustment
+				   but if we skip some commands, Pmove() will do >1 steps according to cmd.serverTime difference 🤔 */
+				// skip commands with serverTime used by repeated commands
+				if( pcmd->cmd.serverTime <= cl->lastUsercmd.serverTime ){
+					//% Com_Printf("--->usercmdCount %i, pcmd->cmd.serverTime %i, pcmd->scheduledTime %i, svs.time %i\n", (int)(pcmdend - pcmd), pcmd->cmd.serverTime, pcmd->scheduledTime, svs.time ); //%
+					continue;
 				}
-				else{
-					break;
-				}
+				//% Com_Printf("cl->usercmdCount %i, pcmd->cmd.serverTime %i, pcmd->scheduledTime %i, svs.time %i\n", (int)(pcmdend - pcmd), pcmd->cmd.serverTime, pcmd->scheduledTime, svs.time ); //%
+				cl->deltaActive = pcmd->delta;
+				SV_ClientThink( cl, &pcmd->cmd );
 			}
+			cl->usercmdCount = pcmdend - pcmd;
+			memmove( cl->usercmdBuf, pcmd, sizeof( *cl->usercmdBuf ) * cl->usercmdCount );
 		}
 	}
 }
@@ -2308,28 +2317,27 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 			continue;
 		}
 
-		// anticipate pmove_fixed snapping
-		// ucmd->serverTime = ((ucmd->serverTime + pmove_msec.integer-1) / pmove_msec.integer) * pmove_msec.integer;
-		// https://github.com/id-Software/Quake-III-Arena/blob/dbe4ddb10315479fc00086f08e25d968b4b43c49/code/game/g_active.c#L800
-		// fixes plasma climb with com_maxfps 140 (with bloat fix enabled)
-		cmds[i].serverTime = (cmds[i].serverTime + 7) & ~7;
-		
-
-		// extremely lagged or cmd from before a map_restart
-		//if ( cmds[i].serverTime > svs.time + 3000 ) {
-		//	continue;
-		//}
-		// don't execute if this is an old cmd which is already executed
-		// these old cmds are included when cl_packetdup > 0
-		//if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
-		if ( cmds[i].serverTime - cl->lastUsercmd.serverTime <= 0 ) {
-			continue;
-		}
-		
 		if( cl->usercmdBloat == 0 ){
+			// extremely lagged or cmd from before a map_restart
+			//if ( cmds[i].serverTime > svs.time + 3000 ) {
+			//	continue;
+			//}
+			// don't execute if this is an old cmd which is already executed
+			// these old cmds are included when cl_packetdup > 0
+			//if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
+			if ( cmds[i].serverTime - cl->lastUsercmd.serverTime <= 0 ) {
+				continue;
+			}
+			
 			SV_ClientThink( cl, &cmds[ i ] );
 		}
 		else{
+			// anticipate pmove_fixed snapping
+			// ucmd->serverTime = ((ucmd->serverTime + pmove_msec.integer-1) / pmove_msec.integer) * pmove_msec.integer;
+			// https://github.com/id-Software/Quake-III-Arena/blob/dbe4ddb10315479fc00086f08e25d968b4b43c49/code/game/g_active.c#L800
+			// fixes plasma climb with com_maxfps 140 (with bloat fix enabled)
+			cmds[i].serverTime = (cmds[i].serverTime + 7) & ~7;
+			
 			if( cl->usercmdLastServerTime == 0 // reset client->usercmdBuf state on connect/map_restart/level change
 			|| cl->usercmdCount > USERCMD_BUFFER_SIZE - 14 ){ // or on unexpected big bloat
 				cl->usercmdCount = 0;
@@ -2347,7 +2355,6 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 				pcmd->scheduledTime = cl->usercmdLastScheduleTime + ( pcmd->cmd.serverTime - cl->usercmdLastServerTime );
 				cl->usercmdLastScheduleTime = pcmd->scheduledTime;
 				cl->usercmdLastServerTime = pcmd->cmd.serverTime;
-			
 #if 0
 				pcmd->scheduledTime =
 				// this: svs.time or prevcmd->scheduledTime + 8 approach works perfectly, but
