@@ -143,6 +143,43 @@ static client_t *SV_GetPlayerByNum( void ) {
 
 //=========================================================
 
+#include "sv_curl.h"
+static download_t s_download;
+qboolean	Com_DL_Perform( download_t *dl );
+void		Com_DL_Cleanup( download_t *dl );
+qboolean	Com_DL_Begin( download_t *dl, const char *localName, const char *remoteURL, qboolean autoDownload );
+qboolean	Com_DL_InProgress( const download_t *dl );
+qboolean	Com_DL_ValidFileName( const char *fileName );
+
+static int SV_Download( const char *mapname )
+{
+	// char url[MAX_OSPATH];
+	// char name[MAX_CVAR_VALUE_STRING];
+	// const char *s;
+
+	if ( sv_dlURL->string[0] == '\0' )
+	{
+		Com_Printf( S_COLOR_YELLOW "sv_dlURL cvar is not set\n" );
+		return -1;
+	}
+
+	if ( !Com_DL_ValidFileName( mapname ) )
+	{
+		Com_Printf( S_COLOR_YELLOW "invalid file name: '%s'.\n", mapname );
+		return -1;
+	}
+
+	if( Com_DL_Begin( &s_download, mapname, sv_dlURL->string, qfalse ) ){
+		qboolean r = qtrue;
+		while( Com_DL_InProgress( &s_download ) ){ r = Com_DL_Perform( &s_download ); }
+		return r? -1 : 1; // Com_DL_Perform returns false on success
+	}
+	else{
+		return -1;
+	}
+}
+
+
 
 /*
 ==================
@@ -170,6 +207,10 @@ static void SV_Map_f( void ) {
 	// bypass pure check so we can open downloaded map
 	FS_BypassPure();
 	len = FS_FOpenFileRead( expanded, NULL, qfalse );
+#ifdef USE_CURL
+	if ( len == -1 ) 
+		len = SV_Download( map );
+#endif
 	FS_RestorePure();
 	if ( len == -1 ) {
 		Com_Printf( "Can't find map %s\n", expanded );

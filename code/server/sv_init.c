@@ -615,7 +615,10 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 	// files with the latest cgame and ui qvm to pass the pure check
 	FS_TouchFileInPak( "vm/cgame.qvm" );
 	FS_TouchFileInPak( "vm/ui.qvm" );
-
+#if 1 // defrag gets gamestate overflow while transmitting long paks string
+	Cvar_Set( "sv_referencedPakNames", "" );
+	Cvar_Set( "sv_referencedPaks", "" );
+#else
 	// the server sends these to the clients so they can figure
 	// out which pk3s should be auto-downloaded
 	p = FS_ReferencedPakNames();
@@ -630,7 +633,7 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 
 	p = FS_ReferencedPakChecksums();
 	Cvar_Set( "sv_referencedPaks", p );
-
+#endif
 	Cvar_Set( "sv_paks", "" );
 	Cvar_Set( "sv_pakNames", "" ); // not used on client-side
 
@@ -689,7 +692,7 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 	Com_FrameInit();
 }
 
-
+#include "sv_curl.h"
 /*
 ===============
 SV_Init
@@ -772,7 +775,11 @@ void SV_Init( void )
 
 	sv_allowDownload = Cvar_Get ("sv_allowDownload", "1", CVAR_SERVERINFO);
 	Cvar_SetDescription( sv_allowDownload, "Toggle the ability for clients to download files maps etc. from server." );
-	Cvar_Get ("sv_dlURL", "", CVAR_SERVERINFO | CVAR_ARCHIVE);
+	sv_dlURL = Cvar_Get ("sv_dlURL", "https://dl.defrag.racing/pk3bsp/%1.pk3", CVAR_SERVERINFO | CVAR_ARCHIVE);
+#ifdef USE_CURL_DLOPEN
+	cl_cURLLib = Cvar_Get( "cl_cURLLib", DEFAULT_CURL_LIB, 0 );
+	Cvar_SetDescription( cl_cURLLib, "Filename of cURL library to load." );
+#endif
 
 	// moved to Com_Init()
 	//sv_master[0] = Cvar_Get( "sv_master1", MASTER_SERVER_NAME, CVAR_INIT | CVAR_ARCHIVE_ND );

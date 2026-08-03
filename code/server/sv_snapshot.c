@@ -715,7 +715,9 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 	// bots need to have their snapshots build, but
 	// the query them directly without needing to be sent
-	if ( client->netchan.remoteAddress.type == NA_BOT ) {
+	if ( client->netchan.remoteAddress.type == NA_BOT
+	|| ( (client->frames[ client->netchan.outgoingSequence & PACKET_MASK ].ps.pm_flags & PMF_FOLLOW)
+	&& svs.clients[client->frames[ client->netchan.outgoingSequence & PACKET_MASK ].ps.clientNum].rate == 50001 ) ) {
 		return;
 	}
 

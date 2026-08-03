@@ -5639,6 +5639,10 @@ int FS_VM_OpenFile( const char *qpath, fileHandle_t *f, fsMode_t mode, handleOwn
 	if ( f && *f != FS_INVALID_HANDLE )
 		fsh[ *f ].owner = owner;
 
+	// HACK: bypass defrag 'bsp file exists check' on vote (can actually check downloadable file existence)
+	if( f == NULL && r < 0 && !Q_stricmpn( qpath, "maps/", 5 ) && !Q_stricmp( qpath + strlen( qpath ) - 4, ".bsp" ) )
+		r = 1;
+
 	return r;
 }
 

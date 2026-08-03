@@ -465,11 +465,11 @@ ifdef MINGW
   ifeq ($(USE_CURL),1)
     BASE_CFLAGS += -I$(MOUNT_DIR)/libcurl/windows/include
     ifeq ($(ARCH),x86)
-      CLIENT_LDFLAGS += -L$(MOUNT_DIR)/libcurl/windows/mingw/lib32
+      LDFLAGS += -L$(MOUNT_DIR)/libcurl/windows/mingw/lib32
     else
-      CLIENT_LDFLAGS += -L$(MOUNT_DIR)/libcurl/windows/mingw/lib64
+      LDFLAGS += -L$(MOUNT_DIR)/libcurl/windows/mingw/lib64
     endif
-    CLIENT_LDFLAGS += -lcurl -lz -lcrypt32
+    LDFLAGS += -lcurl -lz -lcrypt32
   endif
 
   ifeq ($(USE_OGG_VORBIS),1)
@@ -608,7 +608,7 @@ else
 
   ifeq ($(USE_CURL),1)
     ifeq ($(USE_CURL_DLOPEN),0)
-      CLIENT_LDFLAGS += -lcurl
+      LDFLAGS += -lcurl
     endif
   endif
 
@@ -1367,6 +1367,10 @@ Q3DOBJ = \
   $(B)/ded/l_script.o \
   $(B)/ded/l_struct.o
 
+ifeq ($(USE_CURL),1)
+  Q3DOBJ += $(B)/ded/sv_curl.o
+endif
+
 ifdef MINGW
   Q3DOBJ += \
   $(B)/ded/win_main.o \
@@ -1408,7 +1412,7 @@ endif
 $(B)/$(TARGET_SERVER): $(Q3DOBJ)
 	$(echo_cmd) $(Q3DOBJ)
 	$(echo_cmd) "LD $@"
-	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS)
+	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS) $(LDFLAGS)
 
 #############################################################################
 ## CLIENT/SERVER RULES
